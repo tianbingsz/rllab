@@ -1,4 +1,5 @@
 import numpy as np
+from copy import deepcopy
 
 
 class BatchDataset(object):
@@ -20,6 +21,17 @@ class BatchDataset(object):
         if self._batch_size is None:
             return 1
         return int(np.ceil(self._inputs[0].shape[0] * 1.0 / self._batch_size))
+
+    def random_batch(self):
+        if self._batch_size is None:
+            return list(self._inputs) + list(self._extra_inputs)
+        else:
+            itr = np.random.randint(0, self.number_batches)
+            batch_start = itr * self._batch_size
+            batch_end = (itr + 1) * self._batch_size
+            batch_ids = self._ids[batch_start:batch_end]
+            batch = [d[batch_ids] for d in self._inputs]
+            return list(batch) + list(self._extra_inputs)
 
     def iterate(self, update=True):
         if self._batch_size is None:
