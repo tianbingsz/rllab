@@ -5,7 +5,6 @@ Tianbing Xu 7-10-2017
 import multiprocessing
 import sys
 from subprocess import call
-import pdb
 import numpy as np
 
 prefix_map = {
@@ -25,7 +24,7 @@ algorithm_map = {
     'svrg': 'svrg',
 }
 
-root_dir = "../logs/log_svrg_tr_swim"
+root_dir = "../logs/log_svrg_swim"
 seed = 1
 game = 'swim'
 algorithm = "svrg"
@@ -33,7 +32,7 @@ batch_size = 50000
 mini_batch_sizes = [5000]
 max_path_length = 1000
 delta = 0.01
-n_itr = 2
+n_itr = 500
 max_epochs = 1
 cg_iters = 10
 subsample_factor = 0.1
@@ -60,7 +59,7 @@ if __name__ == "__main__":
             print(command)
             call(command, shell=True)
 
-            plotOut = "fig.7.10.{:}_{:}_{:}_{:}_{:}.png".format(
+            plotOut = "fig.{:}_{:}_{:}_{:}_{:}.png".format(
                 algorithm, game, n_itr, mini_batch_size, max_batch)
             plotcmd = "python plotComparison.py -o {:} -a {:} -e {:} -t {:} -m 1 -p 0 -i {:}".format(
                 plotOut, algorithm_map[algorithm], prefix_map[game], n_itr, root_dir)

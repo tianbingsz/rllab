@@ -1,6 +1,3 @@
-# result in gym
-# https://gym.openai.com/evaluations/eval_V5kUOaJTQS8HhqCvCxHvQ
-
 from sandbox.rocky.tf.algos.trpo import TRPO
 from rllab.baselines.linear_feature_baseline import LinearFeatureBaseline
 from rllab.envs.box2d.cartpole_env import CartpoleEnv
@@ -31,13 +28,10 @@ algo = TRPO(
     policy=policy,
     baseline=baseline,
     batch_size=50000,
-    #max_path_length=200,
     max_path_length=env.horizon,
     n_itr=10,
     discount=0.995,
     step_size=0.01,
-    # plot=True,
-    # optimizer=ConjugateGradientOptimizer(hvp_approach=FiniteDifferenceHvp(base_eps=1e-5))
 
 )
 

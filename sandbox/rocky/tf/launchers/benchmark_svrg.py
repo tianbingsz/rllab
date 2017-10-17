@@ -19,7 +19,6 @@ from rllab.misc.instrument import stub, run_experiment_lite
 from sandbox.rocky.tf.algos.pg_svrg import SVRGPG
 from rllab.baselines.linear_feature_baseline import LinearFeatureBaseline
 import os
-import pdb
 
 stub(globals())
 

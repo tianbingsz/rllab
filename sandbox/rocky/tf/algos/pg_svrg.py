@@ -8,7 +8,6 @@ from sandbox.rocky.tf.misc import tensor_utils
 from rllab.core.serializable import Serializable
 import tensorflow as tf
 import numpy as np
-import pdb
 
 
 class SVRGPG(BatchPolopt, Serializable):
