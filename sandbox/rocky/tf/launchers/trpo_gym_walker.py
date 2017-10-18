@@ -29,7 +29,7 @@ algo = TRPO(
     baseline=baseline,
     batch_size=50000,
     max_path_length=env.horizon,
-    n_itr=10,
+    n_itr=1000,
     discount=0.995,
     step_size=0.01,
 
