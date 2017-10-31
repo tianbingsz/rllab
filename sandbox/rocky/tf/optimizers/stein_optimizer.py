@@ -1,6 +1,5 @@
 
 
-
 from rllab.misc import ext
 from rllab.misc import logger
 from rllab.core.serializable import Serializable
@@ -30,6 +29,7 @@ class SteinOptimizer(Serializable):
             tolerance=1e-6,
             batch_size=32,
             max_batch=10,
+            alpha=0.1,
             callback=None,
             verbose=False,
             **kwargs):
@@ -60,10 +60,12 @@ class SteinOptimizer(Serializable):
         self._train_op = None
         self._learning_rate = learning_rate
         self._max_batch = max_batch
+        self._alpha = alpha
 
         logger.log('max_batch %d' % (self._max_batch))
 
-    def update_opt(self, loss, target, logstd, inputs, extra_inputs=None, **kwargs):
+    def update_opt(self, loss, target, logstd, inputs,
+                   extra_inputs=None, **kwargs):
         """
         :param loss: Symbolic expression for the loss function.
         :param target: A parameterized object to optimize over. It should implement methods of the
@@ -75,7 +77,7 @@ class SteinOptimizer(Serializable):
 
         self._target = target
 
-        self._log_std = logstd
+        self._log_std = tf.reduce_mean(logstd)
 
         if extra_inputs is None:
             extra_inputs = list()
@@ -83,20 +85,20 @@ class SteinOptimizer(Serializable):
 
         # \partial{log \pi} / \partial{\phi} A
         # \phi is the mean_network parameters
-        #pdb.set_trace()
+        # pdb.set_trace()
         mean_w = target.get_mean_network().get_params(trainable=True)
         grads = tf.gradients(loss,
-            xs=target.get_mean_network().get_params(trainable=True))
+                             xs=target.get_mean_network().get_params(trainable=True))
         for idx, (g, param) in enumerate(zip(grads, mean_w)):
             if g is None:
                 grads[idx] = tf.zeros_like(param)
         flat_grad = tensor_utils.flatten_tensor_variables(grads)
-        
+
         # \sum_d \partial{logstd^d} / \partial{\phi}
         # \phi is the std_network parameters
-        var_grads = tf.gradients(self._log_std,
-            xs=target.get_std_network().get_params(trainable=True) 
-        )
+        var_grads = tf.gradients(self._alpha * self._log_std + loss,
+                                 xs=target.get_std_network().get_params(trainable=True)
+                                 )
         var_w = target.get_std_network().get_params(trainable=True)
         for idx, (g, param) in enumerate(zip(var_grads, var_w)):
             if g is None:
@@ -104,7 +106,8 @@ class SteinOptimizer(Serializable):
         flat_var_grad = tensor_utils.flatten_tensor_variables(var_grads)
 
         self._opt_fun = ext.lazydict(
-            f_loss=lambda: tensor_utils.compile_function(inputs + extra_inputs, loss),
+            f_loss=lambda: tensor_utils.compile_function(
+                inputs + extra_inputs, loss),
             f_grad=lambda: tensor_utils.compile_function(
                 inputs=inputs + extra_inputs,
                 outputs=flat_grad,
@@ -123,7 +126,7 @@ class SteinOptimizer(Serializable):
     def optimize(self, inputs, extra_inputs=None, callback=None):
         if len(inputs) == 0:
             raise NotImplementedError
-        
+
         f_loss = self._opt_fun["f_loss"]
         f_grad = self._opt_fun["f_grad"]
         f_var_grad = self._opt_fun["f_var_grad"]
@@ -135,34 +138,38 @@ class SteinOptimizer(Serializable):
             extra_inputs = tuple(extra_inputs)
 
         dataset = BatchDataset(
-            inputs, 
+            inputs,
             self._batch_size,
-            extra_inputs=extra_inputs)        
-        
+            extra_inputs=extra_inputs)
+
         mean_w = self._target.get_mean_network().get_param_values(trainable=True)
+        var_w = self._target.get_std_network().get_param_values(trainable=True)
         for epoch in range(self._max_epochs):
             if self._verbose:
                 logger.log("Epoch %d" % (epoch))
                 progbar = pyprind.ProgBar(len(inputs[0]))
-            
-            num_batch=0
+
+            num_batch = 0
             loss = f_loss(*(tuple(inputs)) + extra_inputs)
             while num_batch < self._max_batch:
                 batch = dataset.random_batch()
-                #g = f_grad(*(batch)) + self._alpha * f_var_grad(*(batch))
                 g = f_grad(*(batch))
                 # w = w - \eta g
                 # pdb.set_trace()
                 mean_w = mean_w - self._learning_rate * g
                 self._target.get_mean_network().set_param_values(mean_w,
-                        trainable=True)
-                
+                                                                 trainable=True)
+
+                # pdb.set_trace()
+                g_var = f_var_grad(*(batch))
+                var_w = var_w - self._learning_rate * g_var
+                self._target.get_std_network().set_param_values(var_w,
+                                                                trainable=True)
+
                 new_loss = f_loss(*(tuple(inputs) + extra_inputs))
-                print("batch {:}, loss {:}, loss diff {:},  grad {:}, weight {:}".format(
-                    num_batch, new_loss, new_loss - loss, LA.norm(g), LA.norm(mean_w)))
+                print("mean: batch {:} grad {:}, weight {:}".format(
+                    num_batch, LA.norm(g), LA.norm(mean_w)))
+                print("var: batch {:}, loss {:}, diff loss{:}, grad {:}, weight {:}".format(
+                    num_batch, new_loss, new_loss - loss, LA.norm(g_var), LA.norm(var_w)))
                 loss = new_loss
                 num_batch += 1
-
-
-
-

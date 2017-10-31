@@ -32,7 +32,8 @@ algo = PGStein(
     discount=0.99,
     optimizer_args=dict(
         learning_rate=0.01,
-        max_batch=50,
+        max_batch=10,
+        alpha = 0.1,
     )
 )
 
