@@ -105,6 +105,7 @@ class GaussianMLPPolicy(StochasticPolicy, LayersPowered, Serializable):
                     )
 
             self.std_parametrization = std_parametrization
+            self._std_network = std_network
 
             if std_parametrization == 'exp':
                 min_std_param = np.log(min_std)
@@ -130,7 +131,8 @@ class GaussianMLPPolicy(StochasticPolicy, LayersPowered, Serializable):
             LayersPowered.__init__(self, [l_mean, l_std_param])
             super(GaussianMLPPolicy, self).__init__(env_spec)
 
-            dist_info_sym = self.dist_info_sym(mean_network.input_layer.input_var, dict())
+            dist_info_sym = self.dist_info_sym(
+                mean_network.input_layer.input_var, dict())
             mean_var = dist_info_sym["mean"]
             log_std_var = dist_info_sym["log_std"]
 
@@ -144,7 +146,8 @@ class GaussianMLPPolicy(StochasticPolicy, LayersPowered, Serializable):
         return True
 
     def dist_info_sym(self, obs_var, state_info_vars=None):
-        mean_var, std_param_var = L.get_output([self._l_mean, self._l_std_param], obs_var)
+        mean_var, std_param_var = L.get_output(
+            [self._l_mean, self._l_std_param], obs_var)
         if self.min_std_param is not None:
             std_param_var = tf.maximum(std_param_var, self.min_std_param)
         if self.std_parametrization == 'exp':
@@ -182,14 +185,22 @@ class GaussianMLPPolicy(StochasticPolicy, LayersPowered, Serializable):
         new_dist_info_vars = self.dist_info_sym(obs_var, action_var)
         new_mean_var, new_log_std_var = new_dist_info_vars["mean"], new_dist_info_vars["log_std"]
         old_mean_var, old_log_std_var = old_dist_info_vars["mean"], old_dist_info_vars["log_std"]
-        epsilon_var = (action_var - old_mean_var) / (tf.exp(old_log_std_var) + 1e-8)
+        epsilon_var = (action_var - old_mean_var) / \
+            (tf.exp(old_log_std_var) + 1e-8)
         new_action_var = new_mean_var + epsilon_var * tf.exp(new_log_std_var)
         return new_action_var
 
     def log_diagnostics(self, paths):
-        log_stds = np.vstack([path["agent_infos"]["log_std"] for path in paths])
+        log_stds = np.vstack([path["agent_infos"]["log_std"]
+                              for path in paths])
         logger.record_tabular('AveragePolicyStd', np.mean(np.exp(log_stds)))
 
     @property
     def distribution(self):
         return self._dist
+
+    def get_mean_network(self):
+        return self._mean_network
+
+    def get_std_network(self):
+        return self._std_network
