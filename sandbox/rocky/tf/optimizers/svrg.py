@@ -14,6 +14,7 @@ from numpy import linalg as LA
 import numpy as np
 from scipy.stats import norm
 from copy import deepcopy
+import pdb
 
 class SVRGOptimizer(Serializable):
     """
@@ -218,6 +219,7 @@ class SVRGOptimizer(Serializable):
                             f_grad_tilde(*(batch)) + g_mean_tilde
                 grad_sum += g
                 subsample_inputs = subsamples.random_batch()
+                pdb.set_trace()
                 Hx = self._hvp_approach.build_eval(subsample_inputs)
                 self.conjugate_grad(g, Hx, inputs, extra_inputs)
                 num_batch += 1

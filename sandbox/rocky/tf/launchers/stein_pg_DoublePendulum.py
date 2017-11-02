@@ -30,10 +30,14 @@ algo = PGStein(
     max_path_length=100,
     n_itr=100,
     discount=0.99,
+    delta=0.01,
     optimizer_args=dict(
+        batch_size=100,
+        max_epochs=1,
         learning_rate=0.01,
         max_batch=10,
-        alpha = 0.1,
+        alpha = 1,
+        subsample_factor=0.1,
     )
 )
 

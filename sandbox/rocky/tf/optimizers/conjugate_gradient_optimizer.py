@@ -8,6 +8,7 @@ import numpy as np
 import tensorflow as tf
 from sandbox.rocky.tf.misc import tensor_utils
 from rllab.misc.ext import sliced_fun
+import pdb
 
 
 class PerlmutterHvp(object):
