@@ -2,115 +2,107 @@ from rllab.misc import ext
 from rllab.misc import krylov
 from rllab.misc import logger
 from rllab.core.serializable import Serializable
-from sandbox.rocky.tf.misc import tensor_utils
-from sandbox.rocky.tf.optimizers.conjugate_gradient_optimizer import PerlmutterHvp
 from rllab.optimizers.minibatch_dataset import BatchDataset
-from rllab.misc.ext import sliced_fun
-import tensorflow as tf
-import time
-from functools import partial
-import pyprind
-from numpy import linalg as LA
+from sandbox.rocky.tf.optimizers.conjugate_gradient_optimizer import PerlmutterHvp
+# from rllab.misc.ext import flatten_tensor_variables
+import itertools
 import numpy as np
-from scipy.stats import norm
-from copy import deepcopy
+import tensorflow as tf
+from sandbox.rocky.tf.misc import tensor_utils
+from rllab.misc.ext import sliced_fun
 import pdb
 
 
 class SteinOptimizer(Serializable):
     """
-    Performs parametric stein variational inference in TRPO
+    TRPO with Stein inference
     """
 
     def __init__(
             self,
-            eta=0.01,
-            alpha=0.0,
-            max_epochs=1,
-            tolerance=1e-5,
-            batch_size=32,
-            epsilon=1e-8,
-            verbose=False,
-            num_slices=1,
-            scale=1.0,
-            backtrack_ratio=0.5,
-            max_backtracks=10,
             cg_iters=10,
             reg_coeff=1e-5,
+            alpha=0.0,
+            max_epochs=1,
             subsample_factor=1.,
+            backtrack_ratio=0.5,
+            max_backtracks=10,
+            debug_nan=False,
+            accept_violation=False,
             hvp_approach=None,
-            max_batch=10,
-            **kwargs):
+            num_slices=1):
         """
 
-        :param max_epochs:
-        :param tolerance:
-        :param update_method:
-        :param batch_size: None or an integer. If None the whole dataset will be used.
         :param cg_iters: The number of CG iterations used to calculate A^-1 g
         :param reg_coeff: A small value so that A -> A + reg*I
         :param subsample_factor: Subsampling factor to reduce samples when using "conjugate gradient. Since the
         computation time for the descent direction dominates, this can greatly reduce the overall computation time.
-        :param kwargs:
+        :param debug_nan: if set to True, NanGuard will be added to the compilation, and ipdb will be invoked when
+        nan is detected
+        :param accept_violation: whether to accept the descent step if it violates the line search condition after
+        exhausting all backtracking budgets
         :return:
         """
         Serializable.quick_init(self, locals())
-        self._eta = eta
-        self._alpha = alpha
-        self._opt_fun = None
-        self._target = None
-        self._max_epochs = max_epochs
-        self._tolerance = tolerance
-        self._batch_size = batch_size
-        self._epsilon = epsilon
-        self._verbose = verbose
-        self._input_vars = None
-        self._num_slices = num_slices
-        self._backtrack_ratio = backtrack_ratio
-        self._max_backtracks = max_backtracks
-        self._max_batch = max_batch
-
         self._cg_iters = cg_iters
         self._reg_coeff = reg_coeff
         self._subsample_factor = subsample_factor
+        self._backtrack_ratio = backtrack_ratio
+        self._max_backtracks = max_backtracks
+        self._num_slices = num_slices
+
+        self._opt_fun = None
+        self._target = None
+        self._max_constraint_val = None
+        self._constraint_name = None
+        self._debug_nan = debug_nan
+        self._accept_violation = accept_violation
         self._mean_hvp = PerlmutterHvp(num_slices)
         self._var_hvp = PerlmutterHvp(num_slices)
 
-        logger.log('max_batch %d' % (self._max_batch))
+        self._alpha = alpha
+        self._subsample_factor = subsample_factor
+        self._max_epochs = max_epochs
         logger.log('temperature alpha %f' % (self._alpha))
-        logger.log('mini_batch %d' % (self._batch_size))
-        logger.log('cg_iters %d' % (self._cg_iters))
-        logger.log('subsample_factor %f' % (self._subsample_factor))
 
     def update_opt(self, loss, target, logstd,
-                   leq_constraint, inputs, extra_inputs=None, **kwargs):
+                   leq_constraint, inputs, extra_inputs=None,
+                   constraint_name="constraint", *args, **kwargs):
         """
         :param loss: Symbolic expression for the loss function.
         :param target: A parameterized object to optimize over. It should implement methods of the
         :class:`rllab.core.paramerized.Parameterized` class.
-        :policy network with parameter w to optimize
         :param leq_constraint: A constraint provided as a tuple (f, epsilon), of the form f(*inputs) <= epsilon.
-        :param inputs: A list of symbolic variables as inputs
+        :param inputs: A list of symbolic variables as inputs, which could be subsampled if needed. It is assumed
+        that the first dimension of these inputs should correspond to the number of data points
+        :param extra_inputs: A list of symbolic variables as extra inputs which should not be subsampled
         :return: No return value.
         """
+
+        inputs = tuple(inputs)
         if extra_inputs is None:
-            extra_inputs = list()
-        self._input_vars = inputs + extra_inputs
+            extra_inputs = tuple()
+        else:
+            extra_inputs = tuple(extra_inputs)
 
         self._target = target
         self._log_std = tf.reduce_mean(logstd)
-
         constraint_term, constraint_value = leq_constraint
         self._max_constraint_val = constraint_value
+        self._constraint_name = constraint_name
 
         # \partial{log \pi} / \partial{\phi} A
         # \phi is the mean_network parameters
         mean_w = target.get_mean_network().get_params(trainable=True)
         grads = tf.gradients(loss, xs=mean_w)
-        for idx, (g, param) in enumerate(zip(grads, mean_w)):
-            if g is None:
+        for idx, (grad, param) in enumerate(zip(grads, mean_w)):
+            if grad is None:
                 grads[idx] = tf.zeros_like(param)
         flat_grad = tensor_utils.flatten_tensor_variables(grads)
+        self._mean_hvp.update_opt(f=constraint_term,
+                                  target=target.get_mean_network(),
+                                  inputs=inputs + extra_inputs,
+                                  reg_coeff=self._reg_coeff)
 
         # \sum_d \partial{logstd_d} / \partial{\phi}
         # \phi is the std_network parameters
@@ -122,38 +114,37 @@ class SteinOptimizer(Serializable):
                 var_grads[idx] = tf.zeros_like(param)
         flat_var_grad = tensor_utils.flatten_tensor_variables(var_grads)
 
+        self._var_hvp.update_opt(f=constraint_term,
+                                 target=target.get_std_network(),
+                                 inputs=inputs + extra_inputs,
+                                 reg_coeff=self._reg_coeff)
+
         self._opt_fun = ext.lazydict(
             f_loss=lambda: tensor_utils.compile_function(
                 inputs=inputs + extra_inputs,
                 outputs=loss,
+                log_name="f_loss",
             ),
             f_grad=lambda: tensor_utils.compile_function(
                 inputs=inputs + extra_inputs,
                 outputs=flat_grad,
+                log_name="f_grad",
             ),
             f_var_grad=lambda: tensor_utils.compile_function(
                 inputs=inputs + extra_inputs,
                 outputs=flat_var_grad,
             ),
+            f_constraint=lambda: tensor_utils.compile_function(
+                inputs=inputs + extra_inputs,
+                outputs=constraint_term,
+                log_name="constraint",
+            ),
             f_loss_constraint=lambda: tensor_utils.compile_function(
                 inputs=inputs + extra_inputs,
                 outputs=[loss, constraint_term],
+                log_name="f_loss_constraint",
             ),
         )
-
-        inputs = tuple(inputs)
-        if extra_inputs is None:
-            extra_inputs = tuple()
-        else:
-            extra_inputs = tuple(extra_inputs)
-        self._mean_hvp.update_opt(f=constraint_term,
-                                  target=target.get_mean_network(),
-                                  inputs=inputs + extra_inputs,
-                                  reg_coeff=self._reg_coeff)
-        self._var_hvp.update_opt(f=constraint_term,
-                                 target=target.get_std_network(),
-                                 inputs=inputs + extra_inputs,
-                                 reg_coeff=self._reg_coeff)
 
     def loss(self, inputs, extra_inputs=None):
         inputs = tuple(inputs)
@@ -169,103 +160,110 @@ class SteinOptimizer(Serializable):
         if len(inputs) == 0:
             raise NotImplementedError
 
-        f_loss = self._opt_fun["f_loss"]
-        f_grad = self._opt_fun["f_grad"]
-        f_var_grad = self._opt_fun["f_var_grad"]
-
         inputs = tuple(inputs)
         if extra_inputs is None:
             extra_inputs = tuple()
         else:
             extra_inputs = tuple(extra_inputs)
 
-        param = np.copy(self._target.get_mean_network().get_param_values(
+        param = np.copy(self._target.get_param_values(
             trainable=True))
-        logger.log("Start SVRG CG subsample optimization: #parameters: %d, #inputs: %d, #subsample_inputs: %d" % (
-            len(param), len(inputs[0]), self._subsample_factor * len(inputs[0])))
+        logger.log("Start CG optimization: #parameters: %d, #inputs: %d, #subsample_inputs: %d"
+                   % (len(param), len(inputs[0]), self._subsample_factor * len(inputs[0])))
 
-        subsamples = BatchDataset(
+        if self._subsample_factor < 1:
+            if subsample_grouped_inputs is None:
+                subsample_grouped_inputs = [inputs]
+            subsample_inputs = tuple()
+            for inputs_grouped in subsample_grouped_inputs:
+                n_samples = len(inputs_grouped[0])
+                inds = np.random.choice(
+                    n_samples, int(n_samples * self._subsample_factor), replace=False)
+                subsample_inputs += tuple([x[inds] for x in inputs_grouped])
+        else:
+            subsample_inputs = inputs
+
+        logger.log("performing update")
+
+        logger.log("computing gradient")
+        flat_g = sliced_fun(
+            self._opt_fun["f_grad"],
+            self._num_slices)(
             inputs,
-            int(self._subsample_factor * len(inputs[0])),
-            extra_inputs=extra_inputs)
-
-        dataset = BatchDataset(
+            extra_inputs)
+        flat_var_g = sliced_fun(
+            self._opt_fun["f_var_grad"],
+            self._num_slices)(
             inputs,
-            self._batch_size,
-            extra_inputs=extra_inputs)
+            extra_inputs)
+        logger.log("gradient computed")
 
-        for epoch in range(self._max_epochs):
-            if self._verbose:
-                logger.log("Epoch %d" % (epoch))
-                progbar = pyprind.ProgBar(len(inputs[0]))
-            num_batch = 0
-            while num_batch < self._max_batch:
-                batch = dataset.random_batch()
-                subsample_inputs = subsamples.random_batch()
-                g = f_grad(*(batch))
-                mean_Hx = self._mean_hvp.build_eval(subsample_inputs)
-                self._target_network = self._target.get_mean_network()
-                self.conjugate_grad(g, mean_Hx, inputs, extra_inputs)
+        logger.log("computing descent direction")
+        mean_Hx = self._mean_hvp.build_eval(subsample_inputs + extra_inputs)
+        var_Hx = self._var_hvp.build_eval(subsample_inputs + extra_inputs)
 
-                # update var_network weights
-                var_g = f_var_grad(*(batch))
-                var_Hx = self._var_hvp.build_eval(subsample_inputs)
-                self._target_network = self._target.get_std_network()
-                self.conjugate_grad(var_g, var_Hx, inputs, extra_inputs)
-                num_batch += 1
-            print("max batch achieved {:}".format(num_batch))
-            if self._verbose:
-                progbar.update(batch[0].shape[0])
-
-            if self._verbose:
-                if progbar.active:
-                    progbar.stop()
+        # update mean network parameters
+        self._target_network = self._target.get_mean_network()
+        self.conjugate_grad(flat_g, mean_Hx, inputs, extra_inputs)
+        # update var network parameters
+        self._target_network = self._target.get_std_network()
+        self.conjugate_grad(flat_var_g, var_Hx, inputs, extra_inputs)
 
     def conjugate_grad(self, deltaW, Hx, inputs, extra_inputs=()):
         # s = H^-1 g
         descent_direction = krylov.cg(Hx, deltaW, cg_iters=self._cg_iters)
-        init_step = np.sqrt(
-            2.0 * self._max_constraint_val * (1. / (descent_direction.dot(Hx(descent_direction)) + 1e-8)))
         # s' H s = g' s, as s = H^-1 g
-        # init_step = np.sqrt(2.0 * self._max_constraint_val *
-        #(1. / (descent_direction.dot(deltaW)) + 1e-8))
-        if np.isnan(init_step):
-            init_step = 1.
-        descent_step = init_step * descent_direction
-        return self.line_search(descent_step, inputs, extra_inputs)
+        initial_step_size = np.sqrt(
+            2.0 * self._max_constraint_val *
+            (1. / (descent_direction.dot(Hx(descent_direction)) + 1e-8))
+        )
+        if np.isnan(initial_step_size):
+            initial_step_size = 1.
+        flat_descent_step = initial_step_size * descent_direction
+
+        logger.log("descent direction computed")
+        self.line_search(flat_descent_step, inputs, extra_inputs)
 
     def line_search(self, descent_step, inputs, extra_inputs=()):
-        f_loss = self._opt_fun["f_loss"]
-        f_loss_constraint = self._opt_fun["f_loss_constraint"]
-        prev_w = np.copy(self._target_network.get_param_values(trainable=True))
-        loss_before = f_loss(*(inputs + extra_inputs))
+        logger.log("computing loss before")
+        loss_before = sliced_fun(
+            self._opt_fun["f_loss"],
+            self._num_slices)(
+            inputs,
+            extra_inputs)
+        prev_param = np.copy(
+            self._target_network.get_param_values(
+                trainable=True))
         n_iter = 0
-        succ_line_search = False
         for n_iter, ratio in enumerate(
                 self._backtrack_ratio ** np.arange(self._max_backtracks)):
             cur_step = ratio * descent_step
-            cur_w = prev_w - cur_step
-            self._target_network.set_param_values(cur_w, trainable=True)
-            loss, constraint_val = sliced_fun(f_loss_constraint,
+            cur_param = prev_param - cur_step
+            self._target_network.set_param_values(cur_param, trainable=True)
+            loss, constraint_val = sliced_fun(self._opt_fun["f_loss_constraint"],
                                               self._num_slices)(inputs, extra_inputs)
-            if loss < loss_before and constraint_val <= self._max_constraint_val:
-                succ_line_search = True
-                break
 
-        if (np.isnan(loss) or np.isnan(constraint_val) or loss >=
-                loss_before or constraint_val >= self._max_constraint_val):
+            if self._debug_nan and np.isnan(constraint_val):
+                import ipdb
+                ipdb.set_trace()
+            if loss < loss_before and constraint_val <= self._max_constraint_val:
+                break
+        if (np.isnan(loss) or np.isnan(constraint_val) or loss >= loss_before or constraint_val >=
+                self._max_constraint_val) and not self._accept_violation:
             logger.log("Line search condition violated. Rejecting the step!")
             if np.isnan(loss):
                 logger.log("Violated because loss is NaN")
             if np.isnan(constraint_val):
-                logger.log("Violated because constraint is NaN")
+                logger.log(
+                    "Violated because constraint %s is NaN" %
+                    self._constraint_name)
             if loss >= loss_before:
                 logger.log("Violated because loss not improving")
             if constraint_val >= self._max_constraint_val:
                 logger.log(
-                    "Violated because constraint {:} is violated".format(constraint_val))
-
-            self._target_network.set_param_values(prev_w, trainable=True)
-
+                    "Violated because constraint %s is violated" %
+                    self._constraint_name)
+            self._target_network.set_param_values(prev_param, trainable=True)
         logger.log("backtrack iters: %d" % n_iter)
-        return succ_line_search
+        logger.log("computing loss after")
+        logger.log("optimization finished")

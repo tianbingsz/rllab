@@ -1,6 +1,4 @@
-
-
-from sandbox.rocky.tf.algos.pg_stein import PGStein
+from sandbox.rocky.tf.algos.trpo_stein import TRPOStein
 from rllab.envs.box2d.double_pendulum_env import DoublePendulumEnv
 from rllab.baselines.linear_feature_baseline import LinearFeatureBaseline
 from rllab.envs.normalized_env import normalize
@@ -22,20 +20,17 @@ policy = GaussianMLPPolicy(
 
 baseline = LinearFeatureBaseline(env_spec=env.spec)
 
-algo = PGStein(
+algo = TRPOStein(
     env=env,
     policy=policy,
     baseline=baseline,
     batch_size=5000,
     max_path_length=100,
-    n_itr=100,
+    n_itr=2,
     discount=0.99,
     delta=0.01,
     optimizer_args=dict(
-        batch_size=100,
         max_epochs=1,
-        learning_rate=0.01,
-        max_batch=10,
         alpha = 1,
         subsample_factor=0.1,
     )

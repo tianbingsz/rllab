@@ -1,18 +1,17 @@
-
-
 from rllab.misc import logger
 from rllab.misc import ext
 from rllab.misc.overrides import overrides
 from sandbox.rocky.tf.algos.batch_polopt import BatchPolopt
-from sandbox.rocky.tf.optimizers.stein_svrg_optimizer import SteinOptimizer
+from sandbox.rocky.tf.optimizers.stein_optimizer import SteinOptimizer
 from sandbox.rocky.tf.misc import tensor_utils
 from rllab.core.serializable import Serializable
 import tensorflow as tf
+import pdb
 
 
-class PGStein(BatchPolopt, Serializable):
+class TRPOStein(BatchPolopt, Serializable):
     """
-    Stein Policy Gradient.
+    TRPO with stein inference
     """
 
     def __init__(
@@ -27,7 +26,6 @@ class PGStein(BatchPolopt, Serializable):
         Serializable.quick_init(self, locals())
         if optimizer is None:
             default_args = dict(
-                batch_size=None,
                 max_epochs=1,
             )
             if optimizer_args is None:
@@ -39,7 +37,7 @@ class PGStein(BatchPolopt, Serializable):
         self.opt_info = None
         self.delta = delta
         super(
-            PGStein,
+            TRPOStein,
             self).__init__(
             env=env,
             policy=policy,
@@ -99,7 +97,8 @@ class PGStein(BatchPolopt, Serializable):
         self.optimizer.update_opt(loss=surr_obj,
                                   target=self.policy,
                                   logstd=log_std_var,
-                                  leq_constraint=(mean_kl, self.delta), inputs=input_list)
+                                  leq_constraint=(mean_kl, self.delta), 
+                                  inputs=input_list)
 
         f_kl = tensor_utils.compile_function(
             inputs=input_list,
