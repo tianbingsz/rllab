@@ -15,9 +15,9 @@ env = TfEnv(normalize(DoublePendulumEnv()))
 policy = GaussianMLPPolicy(
     name="policy",
     env_spec=env.spec,
-    hidden_sizes=(10,),
+    hidden_sizes=(100, 50, 25),
     adaptive_std=True,
-    std_hidden_sizes=(5,),
+    std_hidden_sizes=(100,25),
 )
 
 baseline = LinearFeatureBaseline(env_spec=env.spec)
@@ -26,8 +26,8 @@ algo = PGStein(
     env=env,
     policy=policy,
     baseline=baseline,
-    batch_size=5000,
-    max_path_length=100,
+    batch_size=10000,
+    max_path_length=500,
     n_itr=100,
     discount=0.99,
     delta=0.01,
@@ -35,7 +35,7 @@ algo = PGStein(
         batch_size=100,
         max_epochs=1,
         learning_rate=0.01,
-        max_batch=10,
+        max_batch=100,
         alpha = 1,
         subsample_factor=0.1,
     )

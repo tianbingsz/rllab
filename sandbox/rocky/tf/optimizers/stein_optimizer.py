@@ -19,7 +19,7 @@ import pdb
 
 class SteinOptimizer(Serializable):
     """
-    Performs stochastic variance reduction gradient (SVRG) in TRPO
+    Performs parametric stein variational inference in TRPO
     """
 
     def __init__(

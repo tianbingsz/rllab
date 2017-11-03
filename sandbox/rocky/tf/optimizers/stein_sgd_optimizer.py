@@ -96,7 +96,7 @@ class SteinOptimizer(Serializable):
 
         # \sum_d \partial{logstd^d} / \partial{\phi}
         # \phi is the std_network parameters
-        var_grads = tf.gradients(self._alpha * self._log_std + loss,
+        var_grads = tf.gradients(loss - self._alpha * self._log_std,
                                  xs=target.get_std_network().get_params(trainable=True)
                                  )
         var_w = target.get_std_network().get_params(trainable=True)

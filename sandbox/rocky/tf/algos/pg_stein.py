@@ -96,7 +96,6 @@ class PGStein(BatchPolopt, Serializable):
             advantage_var
         ] + state_info_vars_list + old_dist_info_vars_list
 
-        #self.optimizer.update_opt(loss=surr_obj, target=self.policy, logstd=log_std_var, leq_constraint=(mean_kl, self.delta), inputs=input_list)
         self.optimizer.update_opt(loss=surr_obj,
                                   target=self.policy,
                                   logstd=log_std_var,
