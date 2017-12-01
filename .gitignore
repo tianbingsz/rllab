@@ -18,7 +18,6 @@ launch_scripts
 *.sh.e*
 *.sh.o*
 MUJOCO_LOG.TXT
-vendor/mujoco
 .project
 .pydevproject
 *.pdf
