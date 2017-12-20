@@ -1,60 +1,56 @@
-import numpy as np
-
-from rllab.core.serializable import Serializable
 from rllab.envs.base import Step
-from rllab.envs.mujoco.mujoco_env import MujocoEnv
-from rllab.misc import logger
 from rllab.misc.overrides import overrides
+from rllab.envs.mujoco.mujoco_env import MujocoEnv
+import numpy as np
+from rllab.core.serializable import Serializable
+from rllab.misc import logger
+from rllab.misc import autoargs
 
 
-def smooth_abs(x, param):
-    return np.sqrt(np.square(x) + np.square(param)) - param
+class SwimmerEnvX(MujocoEnv, Serializable):
 
-
-class HalfCheetahEnvX(MujocoEnv, Serializable):
-
-    FILE = 'half_cheetah.xml'
+    FILE = 'swimmer.xml'
     metadata = {
         'render.modes': ['human', 'rgb_array'],
         'video.frames_per_second' : 50
     }
 
-    def __init__(self, *args, **kwargs):
-        super(HalfCheetahEnvX, self).__init__(*args, **kwargs)
+    @autoargs.arg('ctrl_cost_coeff', type=float,
+                  help='cost coefficient for controls')
+    def __init__(
+            self,
+            ctrl_cost_coeff=1e-2,
+            *args, **kwargs):
+        self.ctrl_cost_coeff = ctrl_cost_coeff
+        super(SwimmerEnvX, self).__init__(*args, **kwargs)
         self.reward_range = (-np.inf, np.inf)
         self.unwrapped=None
         self._configured=False
-        self.spec.id='HalfCheetahEnvX'
-        Serializable.__init__(self, *args, **kwargs)
+        self.spec.id='SwimmerEnvX'
+        Serializable.quick_init(self, locals())
 
     def get_current_obs(self):
         return np.concatenate([
-            self.model.data.qpos.flatten()[1:],
+            self.model.data.qpos.flat,
             self.model.data.qvel.flat,
             self.get_body_com("torso").flat,
-        ])
-
-    def get_body_xmat(self, body_name):
-        idx = self.model.body_names.index(body_name)
-        return self.model.data.xmat[idx].reshape((3, 3))
-
-    def get_body_com(self, body_name):
-        idx = self.model.body_names.index(body_name)
-        return self.model.data.com_subtree[idx]
+        ]).reshape(-1)
 
     def step(self, action):
         self.forward_dynamics(action)
         next_obs = self.get_current_obs()
-        action = np.clip(action, *self.action_bounds)
-        ctrl_cost = 1e-1 * 0.5 * np.sum(np.square(action))
-        run_cost = -1 * self.get_body_comvel("torso")[0]
-        cost = ctrl_cost + run_cost
-        reward = -cost
+        lb, ub = self.action_bounds
+        scaling = (ub - lb) * 0.5
+        ctrl_cost = 0.5 * self.ctrl_cost_coeff * np.sum(
+            np.square(action / scaling))
+        forward_reward = self.get_body_comvel("torso")[0]
+        reward = forward_reward - ctrl_cost
         done = False
-        if self.get_body_com("torso")[0] <= 5.0:
+        if np.abs(self.get_body_com("torso")[0]) <= 2.0:
             reward = 0.
         else:
-            reward = 1.0
+            reward = 1.0 + np.abs(forward_reward)
+
         return Step(next_obs, reward, done)
 
     @overrides

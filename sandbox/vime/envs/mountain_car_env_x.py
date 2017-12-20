@@ -9,6 +9,10 @@ from rllab.misc.overrides import overrides
 
 
 class MountainCarEnvX(Box2DEnv, Serializable):
+    metadata = {
+        'render.modes': ['human', 'rgb_array'],
+        'video.frames_per_second' : 50
+    }
 
     @autoargs.inherit(Box2DEnv.__init__)
     @autoargs.arg("height_bonus_coeff", type=float,
@@ -27,6 +31,10 @@ class MountainCarEnvX(Box2DEnv, Serializable):
         self.goal_cart_pos = goal_cart_pos
         self.height_bonus = height_bonus
         self.cart = find_body(self.world, "cart")
+        self.reward_range = (-np.inf, np.inf)
+        self.unwrapped=None
+        self._configured=False
+        self.spec.id='MountainCarEnvX'
         Serializable.quick_init(self, locals())
 
     @overrides
@@ -44,8 +52,8 @@ class MountainCarEnvX(Box2DEnv, Serializable):
         self._set_state(self.initial_state)
         self._invalidate_state_caches()
         bounds = np.array([
-            [-1],
-            [1],
+            -1,
+            1,
         ])
         low, high = bounds
         xvel = np.random.uniform(low, high)

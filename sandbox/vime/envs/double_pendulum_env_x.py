@@ -9,6 +9,10 @@ from rllab.misc.overrides import overrides
 
 # http://mlg.eng.cam.ac.uk/pilco/
 class DoublePendulumEnvX(Box2DEnv, Serializable):
+    metadata = {
+        'render.modes': ['human', 'rgb_array'],
+        'video.frames_per_second' : 50
+    }
 
     @autoargs.inherit(Box2DEnv.__init__)
     def __init__(self, *args, **kwargs):
@@ -26,6 +30,10 @@ class DoublePendulumEnvX(Box2DEnv, Serializable):
         )
         self.link1 = find_body(self.world, "link1")
         self.link2 = find_body(self.world, "link2")
+        self.reward_range = (-np.inf, np.inf)
+        self.unwrapped=None
+        self._configured=False
+        self.spec.id='DoublePendulumEnvX'
         Serializable.__init__(self, *args, **kwargs)
 
     @overrides
